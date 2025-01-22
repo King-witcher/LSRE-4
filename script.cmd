@@ -1,0 +1,1 @@
+cargo run --release graphs/qpl-season-2-3.json > out/qpl-season-2-3.json
