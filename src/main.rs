@@ -1,36 +1,60 @@
 /// Module for handling calculus and integrals.
 mod calculus;
-
-/// Module for building graphs.
-mod graph;
-
 /// Module for building game graphs, based on `graph`.
 mod game_graph;
-
+/// Module for building graphs.
+mod graph;
 /// Deserialized json data.
 mod json_data;
-
 /// Module for handling the rating system logic.
 mod rating_system;
 
 use anyhow::Result;
+use clap::{command, Parser};
 use game_graph::GameGraph;
 use json_data::JsonGraph;
 use rating_system::LSR_TO_ELO_RATIO;
-use std::{env, fs::File, path::Path};
+use std::{fs::File, io::Write, path::Path};
 
-const DX: f64 = 1e-5;
+/// A Rust tool for estimating player Elo ratings based on a match graph through Bayes Inference.
+#[derive(Parser, Debug)]
+#[command(version, about)]
+struct Cli {
+    /// The path to the LSRE Json Graph
+    path: String,
+
+    /// The output file. If this is not defined, LSRE prints to the standard output.
+    #[arg(short, long)]
+    output: Option<String>,
+
+    /// The number of estimation rounds to run.
+    #[arg(short = 'n', long, default_value_t = 6)]
+    count: u8,
+
+    /// The infinitesimal dx value.
+    #[arg(short, long, default_value_t = 1e-5)]
+    dx: f64,
+}
 
 fn main() -> Result<()> {
-    let args: Vec<String> = env::args().collect();
+    let args = Cli::parse();
 
-    let mut graph = extract_json_graph(&args[1])?;
+    let mut graph = extract_json_graph(args.path)?;
 
-    estimate(&mut graph, 7);
+    estimate(&mut graph, args.count, args.dx);
     let json = graph.export_json();
+
     eprintln!("done!");
 
-    println!("{json:#}");
+    match args.output {
+        Some(output) => {
+            let mut file = File::create(output)?;
+            write!(file, "{json:#}")?;
+        }
+        None => {
+            println!("{json:#}");
+        }
+    }
     Ok(())
 }
 
@@ -59,7 +83,7 @@ fn priori(x: f64) -> f64 {
 ///
 /// On each round, prints to the standard error output the displacement between the current and previous state. The
 /// displacement is calculated based on the "distance" between each one, considering them as vectors of Elo scores.
-fn estimate(graph: &mut GameGraph, rounds: usize) {
+fn estimate(graph: &mut GameGraph, rounds: u8, dx: f64) {
     for round in 0..rounds {
         eprint!("round {}/{rounds}... ", round + 1);
         let mut square_displacements = 0.0;
@@ -70,7 +94,7 @@ fn estimate(graph: &mut GameGraph, rounds: usize) {
             // Estimate a new rating for each player.
             .map(|player| {
                 let read_lock = player.read().unwrap();
-                let expected_lsr = calculus::avg_value(|x| priori(x) * read_lock.likelihood(x), DX);
+                let expected_lsr = calculus::avg_value(|x| priori(x) * read_lock.likelihood(x), dx);
 
                 // Computes the current displacement.
                 square_displacements += (rating_system::convert_to_elo(read_lock.rating)
